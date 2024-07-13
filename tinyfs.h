@@ -22,9 +22,11 @@ struct file_blk {
         uint8_t file_size;
         uint8_t dir_children;
     };
- 
-    union {//用作目录时,最大记录的条目数，不超过4个; 用作文件时，这里就是文件的buffer大小
-        struct dir_entry dir_data[MAX_SUBDIR_FILES]; //one dir can exit 4 file
+    
+    //用作目录时,最大记录的条目数，不超过4个; 用作文件时，这里就是文件的buffer大小
+    //one dir can exit 4 file
+    union {
+        struct dir_entry dir_data[MAX_SUBDIR_FILES]; 
         char file_data[FILE_BUF_SIZ];
     };
 };

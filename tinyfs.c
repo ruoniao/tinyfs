@@ -12,6 +12,7 @@ struct file_blk block[MAX_FILES+1];
  
 int curr_count = 0;
  
+//获取一个可用的block 块
 static int get_block(void)
 {
     int i;
@@ -25,6 +26,7 @@ static int get_block(void)
     return -1;
 }
  
+ // inode操作函数结构体集合
 static struct inode_operations tinyfs_inode_ops;
  
 /*
@@ -109,14 +111,19 @@ ssize_t tinyfs_write(struct file *filp, const char __user *buf, size_t len, loff
     return len;
 }
  
+ // 文件操作函数
 const struct file_operations tinyfs_file_operations = {
+    // 读文件
     .read = tinyfs_read,
+    // 写文件
     .write = tinyfs_write,
 };
- 
+ // 目录操作函数
 static const struct file_operations tinyfs_dir_operations = {
     .owner = THIS_MODULE,
+    // 读取目录函数
     .read = generic_read_dir,
+    // 函数用于在共享锁定模式下迭代目录内容
     .iterate_shared	= tinyfs_readdir,
 };
  
@@ -207,11 +214,37 @@ static int tinyfs_do_create(struct mnt_idmap *idmap, struct inode *dir, struct d
 }
 
  
+/**
+ * @brief 创建目录
+ *
+ * 在给定的目录 `dir` 下，使用给定的模式 `mode` 创建一个新目录，并将其与 `dentry` 关联。
+ *
+ * @param idmap 挂载点的 ID 映射结构体指针
+ * @param dir 父目录的 inode 结构体指针
+ * @param dentry 新目录的 dentry 结构体指针
+ * @param mode 目录的权限模式
+ *
+ * @return 成功返回 0，失败返回错误码
+ */
 static int tinyfs_mkdir(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, umode_t mode)
 {
     return tinyfs_do_create(&nop_mnt_idmap, dir, dentry, S_IFDIR | mode);
 }
  
+/**
+ * @brief 创建文件或目录
+ *
+ * 在指定的目录（dir）下，根据给定的文件名（dentry）和模式（mode），使用指定的 ID 映射（idmap）创建文件或目录。
+ * 如果 `excl` 为真，则当文件已存在时，创建操作将失败。
+ *
+ * @param idmap ID 映射结构体指针
+ * @param dir 父目录的 inode 结构体指针
+ * @param dentry 要创建的文件或目录的 dentry 结构体指针
+ * @param mode 文件或目录的权限和类型
+ * @param excl 如果为真，当文件已存在时创建失败
+ *
+ * @return 成功返回 0，失败返回错误码
+ */
 static int tinyfs_create(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, umode_t mode, bool excl)
 {
     return tinyfs_do_create(&nop_mnt_idmap, dir, dentry, mode);
@@ -261,15 +294,20 @@ struct dentry *tinyfs_lookup(struct inode *parent_inode, struct dentry *child_de
  
     return NULL;
 }
- 
+ // 文件系统函数，删除目录
 int tinyfs_rmdir(struct inode *dir, struct dentry *dentry)
 {
+    // 获取目录项对应的inode结构体
     struct inode *inode = dentry->d_inode;
+    // 将inode的私有数据强制转换为file_blk结构体指针
     struct file_blk *blk = (struct file_blk*) inode->i_private;
- 
+
+    // 将file_blk的busy成员设置为0，表示当前块不处于忙碌状态
     blk->busy = 0;
+
+    // 调用simple_rmdir函数来删除目录项
     return simple_rmdir(dir, dentry);
-}
+}  
  
 int tinyfs_unlink(struct inode *dir, struct dentry *dentry)
 {
@@ -295,42 +333,61 @@ int tinyfs_unlink(struct inode *dir, struct dentry *dentry)
     return simple_unlink(dir, dentry);
 }
  
+ // inode操作ops 函数表
 static struct inode_operations tinyfs_inode_ops = {
+    // 创建inode
     .create = tinyfs_create,
+    // 查找功能
     .lookup = tinyfs_lookup,
+    // 创建文件夹,文件夹也需要个inode
     .mkdir = tinyfs_mkdir,
+    // 删除目录
     .rmdir = tinyfs_rmdir,
+    // 删除文件
     .unlink = tinyfs_unlink,
 };
- 
+
+// 创建根 root inode函数，在mount 时回调使用
 int tinyfs_fill_super(struct super_block *sb, void *data, int silent)
 {
     struct inode *root_inode;
     umode_t mode = S_IFDIR;
- 
+
+    // 创建一个新的inode节点作为根节点
     root_inode = new_inode(sb);
     root_inode->i_ino = 1;
+    // 初始化inode的所有者
     inode_init_owner(&nop_mnt_idmap, root_inode, NULL, mode);
     root_inode->i_sb = sb;
+    // 设置inode的操作函数
     root_inode->i_op = &tinyfs_inode_ops;
     root_inode->i_fop = &tinyfs_dir_operations;
+    // 设置inode的访问时间和修改时间为当前时间
     root_inode->i_atime = root_inode->i_mtime = inode_set_ctime_current(root_inode);
- 
+
+    // block[0] 作为super block
+    // 初始化block[1]作为根目录的block信息
     block[1].mode = mode;
     block[1].dir_children = 0;
     block[1].idx = 1;
     block[1].busy = 1;
+    // 将block[1]的地址保存到根inode的私有数据中
     root_inode->i_private = &block[1];
- 
+
+    // 输出调试信息
     tinyfs_dbg("%s root inode %llx", __func__, root_inode);
+    // 将根inode节点作为文件系统的根目录
     sb->s_root = d_make_root(root_inode);
+    // 递增当前挂载的文件系统计数
     curr_count ++;
- 
+
     return 0;
 }
  
+ // 文件系统挂载调用函数
 static struct dentry *tinyfs_mount(struct file_system_type *fs_type, int flags, const char* dev_name, void *data)
-{
+{   
+    // 传入回调 创建根inode 函数
     return mount_nodev(fs_type, flags, data, tinyfs_fill_super);
 }
  
@@ -339,6 +396,8 @@ static void tinyfs_kill_superblock(struct super_block *sb)
     kill_anon_super(sb);
 }
  
+ // 文件系统类型说明变量，包括文件系统名称，文件系统mount函数，删除超级快函数
+ // 注册文件系统时调用 register_filesystem
 struct file_system_type tinyfs_fs_type = {
     .owner = THIS_MODULE,
     .name = "tinyfs",
@@ -346,21 +405,28 @@ struct file_system_type tinyfs_fs_type = {
     .kill_sb = tinyfs_kill_superblock,
 };
  
+// 文件系统模块init函数
 static int tinyfs_init(void)
 {
     int ret;
- 
+
+    // 初始化块内存为0
     memset(block, 0, sizeof(block));
+
+    // 注册文件系统
     ret = register_filesystem(&tinyfs_fs_type);
- 
+
+    // 如果注册失败
     if (ret)
+        // 打印注册失败的信息
         pr_info("register tinyfs filesystem failed\n");
- 
+
     return ret;
 }
- 
+// 文件系统模块退出调用函数 
 static void tinyfs_exit(void)
 {
+    // 注销文件系统
     unregister_filesystem(&tinyfs_fs_type);
 }
  
